@@ -17,10 +17,11 @@ import numpy as np
 import paddle
 import paddle.nn as nn
 import paddle.nn.functional as F
+import pandas as pd
 
 from sklearn.metrics import hamming_loss
 from sklearn.metrics import accuracy_score as accuracy_metric
-from sklearn.metrics import multilabel_confusion_matrix
+from sklearn.metrics import multilabel_confusion_matrix, confusion_matrix
 from sklearn.preprocessing import binarize
 
 from easydict import EasyDict
@@ -28,6 +29,111 @@ from easydict import EasyDict
 from ppcls.metric.avg_metrics import AvgMetrics
 from ppcls.utils.misc import AverageMeter, AttrMeter
 from ppcls.utils import logger
+
+from sklearn.metrics import roc_auc_score, roc_curve, precision_recall_curve
+from sklearn.preprocessing import label_binarize
+
+
+class ConfusionMatrixMetric(AvgMetrics):
+    def __init__(self, num_classes):
+        super().__init__()
+        self.num_classes = num_classes
+        self.confusion_matrix = np.zeros((num_classes, num_classes), dtype=int)
+        self.all_targets = []
+        self.all_preds = np.empty((0, num_classes))  # Initialize as an empty array with the correct shape
+
+    def reset(self):
+        self.confusion_matrix = np.zeros((self.num_classes, self.num_classes), dtype=int)
+        self.all_targets = []
+        self.all_preds = np.empty((0, self.num_classes))  # Reset to an empty array
+
+    def forward(self, output, target):
+        preds = paddle.argmax(output, axis=1).numpy()
+        target = target.reshape([-1]).numpy()
+        output_probs = F.softmax(output, axis=1).numpy()
+
+        self.all_targets.extend(target)
+        self.all_preds = np.vstack([self.all_preds, output_probs])  # Stack the new predictions
+
+        cm = confusion_matrix(target, preds, labels=np.arange(self.num_classes))
+        self.confusion_matrix += cm
+
+        accuracy = np.trace(self.confusion_matrix) / np.sum(self.confusion_matrix)
+        precision = np.diag(self.confusion_matrix) / np.sum(self.confusion_matrix, axis=0)
+        recall = np.diag(self.confusion_matrix) / np.sum(self.confusion_matrix, axis=1)
+        f1 = 2 * (precision * recall) / (precision + recall)
+
+        precision = np.nan_to_num(precision, nan=0.0)
+        recall = np.nan_to_num(recall, nan=0.0)
+        f1 = np.nan_to_num(f1, nan=0.0)
+
+        try:
+            if self.num_classes == 2:
+                auc = roc_auc_score(self.all_targets, self.all_preds[:, 1])
+            else:
+                # One-vs-Rest approach for multiclass AUC
+                target_bin = label_binarize(self.all_targets, classes=np.arange(self.num_classes))
+                auc = roc_auc_score(target_bin, self.all_preds, multi_class='ovr')
+        except ValueError as e:
+            print(f"AUC calculation failed: {e}")
+            auc = 0.0
+
+        metric_dict = {
+            "accuracy": paddle.to_tensor(accuracy),
+            "precision": paddle.to_tensor(precision.mean()),
+            "recall": paddle.to_tensor(recall.mean()),
+            "f1": paddle.to_tensor(f1.mean()),
+            "auc": paddle.to_tensor(auc)
+        }
+
+        return metric_dict
+
+    def display(self, epoch_id, mode, save_dir):
+
+        if self.confusion_matrix is not None:
+            pd.set_option('display.max_columns', None)
+            pd.set_option('display.max_rows', False)
+            df = pd.DataFrame(self.confusion_matrix)
+            df.to_csv('confusion_matrix_epoch_{}.csv'.format(epoch_id))
+
+            self.save_roc_curve_data(epoch_id, mode, save_dir)
+            self.save_precision_recall_curve_data(epoch_id, mode, save_dir)
+        else:
+            print("Confusion Matrix not computed yet.")
+
+    def save_roc_curve_data(self, epoch_id, mode, save_dir):
+        if len(self.all_targets) > 0 and len(self.all_preds) > 0:
+            if self.num_classes == 2:
+                fpr, tpr, _ = roc_curve(self.all_targets, self.all_preds[:, 1])
+                roc_df = pd.DataFrame({"False Positive Rate": fpr, "True Positive Rate": tpr})
+                roc_df.to_csv(f'roc_curve_epoch_{epoch_id}.csv', index=False)
+            else:
+                for i in range(self.num_classes):
+                    fpr, tpr, _ = roc_curve(label_binarize(self.all_targets, classes=np.arange(self.num_classes))[:, i], self.all_preds[:, i])
+                    roc_df = pd.DataFrame({"False Positive Rate": fpr, "True Positive Rate": tpr})
+                    roc_df.to_csv(f'roc_curve_class_{i}_epoch_{epoch_id}.csv', index=False)
+
+    def save_precision_recall_curve_data(self, epoch_id, mode, save_dir):
+        if len(self.all_targets) > 0 and len(self.all_preds) > 0:
+            for i in range(self.num_classes):
+                precision, recall, _ = precision_recall_curve(label_binarize(self.all_targets, classes=np.arange(self.num_classes))[:, i], self.all_preds[:, i])
+                pr_df = pd.DataFrame({"Recall": recall, "Precision": precision})
+                pr_df.to_csv(f'precision_recall_curve_class_{i}_epoch_{epoch_id}.csv', index=False)
+
+    def get_confusion_matrix(self):
+        return self.confusion_matrix
+
+    @property
+    def avg_info(self):
+        if self.confusion_matrix is not None:
+            return f"ConfusionMatrix:\n{self.confusion_matrix}"
+        else:
+            return "ConfusionMatrix: Not computed yet"
+
+    @property
+    def avg(self):
+        return self.confusion_matrix
+
 
 
 class TopkAcc(AvgMetrics):

@@ -32,7 +32,7 @@ from ppcls.data import build_dataloader
 from ppcls.arch import build_model, RecModel, DistillationModel, TheseusLayer
 from ppcls.arch import apply_to_static
 from ppcls.loss import build_loss
-from ppcls.metric import build_metrics
+from ppcls.metric import build_metrics, ConfusionMatrixMetric
 from ppcls.optimizer import build_optimizer
 from ppcls.utils.amp import AutoCast, build_scaler
 from ppcls.utils.ema import ExponentialMovingAverage
@@ -337,6 +337,12 @@ class Engine(object):
                 epoch_id, self.config["Global"]["epochs"], metric_msg))
             self.output_info.clear()
 
+            # Print the confusion matrix after each epoch (optional)
+            if self.train_metric_func:
+                for metric in self.train_metric_func.metric_func_list:
+                    if isinstance(metric, ConfusionMatrixMetric):
+                        metric.display(epoch_id, save_dir=self.output_dir, mode="train")
+
             # eval model and save model if possible
             start_eval_epoch = self.config["Global"].get("start_eval_epoch",
                                                          0) - 1
@@ -430,6 +436,13 @@ class Engine(object):
         assert self.mode in ["train", "eval"]
         self.model.eval()
         eval_result = self.eval_func(self, epoch_id)
+
+        # After evaluation, print the confusion matrix
+        if self.eval_metric_func:
+            for metric in self.eval_metric_func.metric_func_list:
+                if isinstance(metric, ConfusionMatrixMetric):
+                    metric.display(epoch_id, save_dir=self.output_dir, mode="eval")
+
         self.model.train()
         return eval_result
 
