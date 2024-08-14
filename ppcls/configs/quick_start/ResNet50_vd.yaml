@@ -124,6 +124,8 @@ Metric:
   Train:
     - TopkAcc:
         topk: [1, 5]
+    - ConfusionMatrixMetric:
+        num_classes: 102
   Eval:
     - TopkAcc:
         topk: [1, 5]
