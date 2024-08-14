@@ -341,7 +341,7 @@ class Engine(object):
             if self.train_metric_func:
                 for metric in self.train_metric_func.metric_func_list:
                     if isinstance(metric, ConfusionMatrixMetric):
-                        metric.display(epoch_id, save_dir=self.output_dir, mode="train")
+                        metric.display(epoch_id, save_dir=self.output_dir, mode="train_metrics")
 
             # eval model and save model if possible
             start_eval_epoch = self.config["Global"].get("start_eval_epoch",
@@ -441,7 +441,7 @@ class Engine(object):
         if self.eval_metric_func:
             for metric in self.eval_metric_func.metric_func_list:
                 if isinstance(metric, ConfusionMatrixMetric):
-                    metric.display(epoch_id, save_dir=self.output_dir, mode="eval")
+                    metric.display(epoch_id, save_dir=self.output_dir, mode="eval_metrics")
 
         self.model.train()
         return eval_result

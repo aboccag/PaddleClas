@@ -18,6 +18,7 @@ import paddle
 import paddle.nn as nn
 import paddle.nn.functional as F
 import pandas as pd
+import os
 
 from sklearn.metrics import hamming_loss
 from sklearn.metrics import accuracy_score as accuracy_metric
@@ -89,12 +90,15 @@ class ConfusionMatrixMetric(AvgMetrics):
         return metric_dict
 
     def display(self, epoch_id, mode, save_dir):
+        # check if directory save_dir/mode exists
+        if not os.path.exists(f'{save_dir}/{mode}'):
+            os.makedirs(f'{save_dir}/{mode}')
 
         if self.confusion_matrix is not None:
             pd.set_option('display.max_columns', None)
             pd.set_option('display.max_rows', False)
             df = pd.DataFrame(self.confusion_matrix)
-            df.to_csv('confusion_matrix_epoch_{}.csv'.format(epoch_id))
+            df.to_csv(f'{save_dir}/{mode}/confusion_matrix_epoch_{epoch_id}.csv', index=False)
 
             self.save_roc_curve_data(epoch_id, mode, save_dir)
             self.save_precision_recall_curve_data(epoch_id, mode, save_dir)
@@ -106,19 +110,19 @@ class ConfusionMatrixMetric(AvgMetrics):
             if self.num_classes == 2:
                 fpr, tpr, _ = roc_curve(self.all_targets, self.all_preds[:, 1])
                 roc_df = pd.DataFrame({"False Positive Rate": fpr, "True Positive Rate": tpr})
-                roc_df.to_csv(f'roc_curve_epoch_{epoch_id}.csv', index=False)
+                roc_df.to_csv(f'{save_dir}/{mode}/_roc_curve_epoch_{epoch_id}.csv', index=False)
             else:
                 for i in range(self.num_classes):
                     fpr, tpr, _ = roc_curve(label_binarize(self.all_targets, classes=np.arange(self.num_classes))[:, i], self.all_preds[:, i])
                     roc_df = pd.DataFrame({"False Positive Rate": fpr, "True Positive Rate": tpr})
-                    roc_df.to_csv(f'roc_curve_class_{i}_epoch_{epoch_id}.csv', index=False)
+                    roc_df.to_csv(f'{save_dir}/{mode}/roc_curve_class_{i}_epoch_{epoch_id}.csv', index=False)
 
     def save_precision_recall_curve_data(self, epoch_id, mode, save_dir):
         if len(self.all_targets) > 0 and len(self.all_preds) > 0:
             for i in range(self.num_classes):
                 precision, recall, _ = precision_recall_curve(label_binarize(self.all_targets, classes=np.arange(self.num_classes))[:, i], self.all_preds[:, i])
                 pr_df = pd.DataFrame({"Recall": recall, "Precision": precision})
-                pr_df.to_csv(f'precision_recall_curve_class_{i}_epoch_{epoch_id}.csv', index=False)
+                pr_df.to_csv(f'{save_dir}/{mode}/pr_curve_class_{i}_epoch_{epoch_id}.csv', index=False)
 
     def get_confusion_matrix(self):
         return self.confusion_matrix
@@ -126,15 +130,39 @@ class ConfusionMatrixMetric(AvgMetrics):
     @property
     def avg_info(self):
         if self.confusion_matrix is not None:
-            return f"ConfusionMatrix:\n{self.confusion_matrix}"
+            accuracy = np.trace(self.confusion_matrix) / np.sum(self.confusion_matrix)
+            precision = np.diag(self.confusion_matrix) / np.sum(self.confusion_matrix, axis=0)
+            recall = np.diag(self.confusion_matrix) / np.sum(self.confusion_matrix, axis=1)
+            f1 = 2 * (precision * recall) / (precision + recall)
+
+            precision = np.nan_to_num(precision, nan=0.0)
+            recall = np.nan_to_num(recall, nan=0.0)
+            f1 = np.nan_to_num(f1, nan=0.0)
+
+            try:
+                if self.num_classes == 2:
+                    auc = roc_auc_score(self.all_targets, self.all_preds[:, 1])
+                else:
+                    target_bin = label_binarize(self.all_targets, classes=np.arange(self.num_classes))
+                    auc = roc_auc_score(target_bin, self.all_preds, multi_class='ovr')
+            except ValueError as e:
+                print(f"AUC calculation failed: {e}")
+                auc = 0.0
+
+            avg_info_str = (
+                f"Accuracy: {accuracy:.4f}, "
+                f"Precision (average): {precision.mean():.4f}, "
+                f"Recall (average): {recall.mean():.4f}, "
+                f"F1 Score (average): {f1.mean():.4f}, "
+                f"AUC: {auc:.4f}"
+            )
+            return avg_info_str
         else:
-            return "ConfusionMatrix: Not computed yet"
+            return ""
 
     @property
     def avg(self):
         return self.confusion_matrix
-
-
 
 class TopkAcc(AvgMetrics):
     def __init__(self, topk=(1, 5)):
