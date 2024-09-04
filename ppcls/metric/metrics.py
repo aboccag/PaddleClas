@@ -76,8 +76,8 @@ class ConfusionMatrixMetric(AvgMetrics):
                 target_bin = label_binarize(self.all_targets, classes=np.arange(self.num_classes))
                 auc = roc_auc_score(target_bin, self.all_preds, multi_class='ovr')
         except ValueError as e:
-            print(f"AUC calculation failed: {e}")
             auc = 0.0
+            pass
 
         metric_dict = {
             "accuracy": paddle.to_tensor(accuracy),
@@ -146,8 +146,8 @@ class ConfusionMatrixMetric(AvgMetrics):
                     target_bin = label_binarize(self.all_targets, classes=np.arange(self.num_classes))
                     auc = roc_auc_score(target_bin, self.all_preds, multi_class='ovr')
             except ValueError as e:
-                print(f"AUC calculation failed: {e}")
                 auc = 0.0
+                pass
 
             avg_info_str = (
                 f"Accuracy: {accuracy:.4f}, "
