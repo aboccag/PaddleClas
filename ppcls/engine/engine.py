@@ -329,6 +329,12 @@ class Engine(object):
             # for one epoch train
             self.train_epoch_func(self, epoch_id, print_batch_step)
 
+            # Print the confusion matrix after each epoch (optional)
+            if self.train_metric_func:
+                for metric in self.train_metric_func.metric_func_list:
+                    if isinstance(metric, ConfusionMatrixMetric):
+                        metric.display(epoch_id, save_dir=self.output_dir, mode="train_metrics")
+
             if self.use_dali:
                 self.train_dataloader.reset()
             metric_msg = ", ".join(
@@ -336,12 +342,6 @@ class Engine(object):
             logger.info("[Train][Epoch {}/{}][Avg]{}".format(
                 epoch_id, self.config["Global"]["epochs"], metric_msg))
             self.output_info.clear()
-
-            # Print the confusion matrix after each epoch (optional)
-            if self.train_metric_func:
-                for metric in self.train_metric_func.metric_func_list:
-                    if isinstance(metric, ConfusionMatrixMetric):
-                        metric.display(epoch_id, save_dir=self.output_dir, mode="train_metrics")
 
             # eval model and save model if possible
             start_eval_epoch = self.config["Global"].get("start_eval_epoch",
