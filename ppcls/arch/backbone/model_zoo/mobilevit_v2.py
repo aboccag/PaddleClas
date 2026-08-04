@@ -266,16 +266,27 @@ class MobileViTV2Block(nn.Layer):
         return patches, (img_h, img_w)
 
     def folding(self, patches, output_size):
-        batch_size, in_dim, patch_size, n_patches = patches.shape
+        in_dim = patches.shape[1]
+        img_h, img_w = output_size
+        n_h, n_w = img_h // self.patch_h, img_w // self.patch_w
 
-        # [B, C, P, N]
-        patches = patches.reshape([batch_size, in_dim * patch_size, n_patches])
-
-        feature_map = F.fold(
-            patches,
-            output_size,
-            kernel_sizes=[self.patch_h, self.patch_w],
-            strides=[self.patch_h, self.patch_w])
+        # The exact inverse of unfolding() above. F.unfold laid each patch out
+        # as (c, kh, kw) over a row-major grid of patches and the patches do not
+        # overlap (strides == kernel_sizes), so splitting those two axes and
+        # interleaving them reconstructs the feature map with nothing to
+        # accumulate -- bit-exact against F.fold, see
+        # scripts/fold_equivalence_test.py in the PoC.
+        #
+        # Written this way rather than with F.fold for two reasons, both of
+        # which block export rather than merely inconvenience it:
+        #   * F.fold asserts math.prod(x.shape) >= 0, which a dynamic batch
+        #     dimension (-1) fails;
+        #   * paddle2onnx has no fold mapper.
+        # [B, C, P, N] --> [B, C, H, W]
+        feature_map = patches.reshape(
+            [-1, in_dim, self.patch_h, self.patch_w, n_h, n_w])
+        feature_map = feature_map.transpose([0, 1, 4, 2, 5, 3])
+        feature_map = feature_map.reshape([-1, in_dim, img_h, img_w])
 
         return feature_map
 
