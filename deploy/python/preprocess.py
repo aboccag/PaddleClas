@@ -20,6 +20,7 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 from functools import partial
+import io
 import six
 import math
 import random
@@ -28,6 +29,9 @@ import numpy as np
 import importlib
 from PIL import Image
 from paddle.vision.transforms import ToTensor, Normalize, Resize, CenterCrop
+from paddle.vision.transforms import functional as F
+
+from paddleclas.deploy.utils import logger
 
 from paddleclas.deploy.python.det_preprocess import DetNormalizeImage, DetPadStride, DetPermute, DetResize
 
@@ -125,10 +129,18 @@ class OperatorParamError(ValueError):
 class DecodeImage(object):
     """ decode image """
 
-    def __init__(self, to_rgb=True, to_np=False, channel_first=False):
+    def __init__(self, to_rgb=True, to_np=False, channel_first=False,
+                 backend="cv2"):
         self.to_rgb = to_rgb
         self.to_np = to_np  # to numpy
         self.channel_first = channel_first  # only enabled when to_np is True
+
+        if backend.lower() not in ["cv2", "pil"]:
+            logger.warning(
+                f"The backend of DecodeImage only support \"cv2\" or \"PIL\". \"f{backend}\" is unavailable. Use \"cv2\" instead."
+            )
+            backend = "cv2"
+        self.backend = backend.lower()
 
     def __call__(self, img):
         if six.PY2:
@@ -137,8 +149,16 @@ class DecodeImage(object):
         else:
             assert type(img) is bytes and len(
                 img) > 0, "invalid input 'img' in DecodeImage"
-        data = np.frombuffer(img, dtype='uint8')
-        img = cv2.imdecode(data, 1)
+        if self.backend == "pil":
+            # Mirrors ppcls/data/preprocess/ops/operators.py: PIL decodes to
+            # RGB, and the array is reversed to BGR here so that the `to_rgb`
+            # flip below lands on RGB exactly as the cv2 path does.
+            img = Image.open(io.BytesIO(img)).convert("RGB")
+            assert img.mode == "RGB", f"invalid mode of image[{img.mode}]"
+            img = np.asarray(img)[:, :, ::-1]
+        else:
+            data = np.frombuffer(img, dtype='uint8')
+            img = cv2.imdecode(data, 1)
         if self.to_rgb:
             assert img.shape[2] == 3, 'invalid shape of image[%s]' % (
                 img.shape)
@@ -148,6 +168,25 @@ class DecodeImage(object):
             img = img.transpose((2, 0, 1))
 
         return img
+
+
+class CropImageAtRatio(object):
+    """ crop image with specified size and padding """
+
+    def __init__(self, size: int, pad: int, interpolation="bilinear"):
+        self.size = size
+        self.ratio = size / (size + pad)
+        self.interpolation = interpolation
+
+    def __call__(self, img):
+        height, width = img.shape[:2]
+        crop_size = int(self.ratio * min(height, width))
+
+        y = (height - crop_size) // 2
+        x = (width - crop_size) // 2
+
+        crop_img = img[y:y + crop_size, x:x + crop_size, :]
+        return F.resize(crop_img, [self.size, self.size], self.interpolation)
 
 
 class ResizeImage(object):
